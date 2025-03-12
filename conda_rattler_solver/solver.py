@@ -1,5 +1,10 @@
+from __future__ import annotations
+
+from pprint import pformat
+import logging
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from boltons.setutils import IndexedSet
 from conda.base.context import context
@@ -12,26 +17,43 @@ from conda.models.prefix_graph import PrefixGraph
 from conda.models.records import PackageRecord
 from conda_libmamba_solver.solver import LibMambaSolver
 from conda_libmamba_solver.state import SolverInputState, SolverOutputState
-from rattler import __version__ as rattler_version
 from rattler import (
-    solve,
     MatchSpec as RattlerMatchSpec,
-    PrefixRecord as RattlerPrefixRecord,
-    VirtualPackage,
 )
+from rattler import (
+    PrefixRecord as RattlerPrefixRecord,
+)
+from rattler import (
+    VirtualPackage,
+    solve,
+)
+from rattler import __version__ as rattler_version
 from rattler.exceptions import SolverError as RattlerSolverError
 
 from . import __version__
 from .exceptions import RattlerUnsatisfiableError
 from .index import RattlerIndexHelper
 
-from . import __version__
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping, Sequence
+
+    from boltons.setutils import IndexedSet
+    from conda.auxlib import _Null
+    from conda.base.constants import (
+        DepsModifier,
+        UpdateModifier,
+    )
+    from libmambapy.solver.libsolv import Database, Solution, UnSolvable
+    from libmambapy.specs import PackageInfo
+
+
+logger = logging.getLogger(f"conda.{__name__}")
 
 
 class RattlerSolver(LibMambaSolver):
     @staticmethod
     @lru_cache(maxsize=None)
-    def user_agent():
+    def user_agent() -> str:
         """
         Expose this identifier to allow conda to extend its user agent if required
         """
@@ -39,13 +61,13 @@ class RattlerSolver(LibMambaSolver):
 
     def solve_final_state(
         self,
-        update_modifier=NULL,
-        deps_modifier=NULL,
-        prune=NULL,
-        ignore_pinned=NULL,
-        force_remove=NULL,
-        should_retry_solve=False,
-    ):
+        update_modifier: UpdateModifier | _Null = NULL,
+        deps_modifier: DepsModifier | _Null = NULL,
+        prune: bool | _Null = NULL,
+        ignore_pinned: bool | _Null = NULL,
+        force_remove: bool | _Null = NULL,
+        should_retry_solve: bool = False,
+    ) -> IndexedSet[PackageRecord]:
         in_state = SolverInputState(
             prefix=self.prefix,
             requested=self.specs_to_add or self.specs_to_remove,
@@ -70,26 +92,37 @@ class RattlerSolver(LibMambaSolver):
             *in_state.channels_from_specs(),
             *in_state.maybe_free_channel(),
         ]
+        logger.info("Channels: %s", pformat(all_channels))
 
-        with Spinner(
-            self._spinner_msg_metadata(all_channels),
-            enabled=not context.verbosity and not context.quiet,
-            json=context.json,
-        ):
-            index = RattlerIndexHelper(all_channels, self.subdirs, self._repodata_fn)
+        # with Spinner(
+        #     self._collect_all_metadata_spinner_message(all_channels),
+        #     enabled=not context.verbosity and not context.quiet,
+        #     json=context.json,
+        # ):
+        #     index = RattlerIndexHelper(all_channels, self.subdirs, self._repodata_fn)
 
-        with Spinner(
-            "Solving environment",
-            enabled=not context.verbosity and not context.quiet,
-            json=context.json,
-        ):
-            try:
-                records = self._solve_attempt(in_state, out_state, index)
-                self._export_solved_records(records, out_state)
-            except RattlerSolverError as exc:
-                exc2 = RattlerUnsatisfiableError(str(exc))
-                exc2.allow_retry = False
-                raise exc2 from exc
+        index = RattlerIndexHelper(all_channels, self.subdirs, self._repodata_fn)
+
+        try:
+            records = self._solve_attempt(in_state, out_state, index)
+            self._export_solved_records(records, out_state)
+        except RattlerSolverError as exc:
+            exc2 = RattlerUnsatisfiableError(str(exc))
+            exc2.allow_retry = False
+            raise exc2 from exc
+
+        # with Spinner(
+        #     "Solving environment",
+        #     enabled=not context.verbosity and not context.quiet,
+        #     json=context.json,
+        # ):
+        #     try:
+        #         records = self._solve_attempt(in_state, out_state, index)
+        #         self._export_solved_records(records, out_state)
+        #     except RattlerSolverError as exc:
+        #         exc2 = RattlerUnsatisfiableError(str(exc))
+        #         exc2.allow_retry = False
+        #         raise exc2 from exc
 
         # Run post-solve tasks
         out_state.post_solve(solver=self)
@@ -97,7 +130,13 @@ class RattlerSolver(LibMambaSolver):
 
         return out_state.current_solution
 
-    def _solve_attempt(self, in_state, out_state, index):
+    def _solve_attempt(
+        self,
+        in_state: SolverInputState,
+        out_state: SolverOutputState,
+        index: RattlerIndexHelper,
+    ) -> tuple[bool, Solution | UnSolvable]:
+        breakpoint()
         out_state.check_for_pin_conflicts(index)
         tasks = self._specs_to_tasks(in_state, out_state)
         # TODO: This is a hack to get the installed packages into the solver

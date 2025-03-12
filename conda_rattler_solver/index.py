@@ -10,22 +10,34 @@ from conda.common.io import DummyExecutor, ThreadLimitedThreadPoolExecutor
 from conda.common.url import percent_decode, remove_auth, split_anaconda_token
 from conda.core.subdir_data import SubdirData
 from conda.models.channel import Channel
-from conda_libmamba_solver.index import _ChannelRepoInfo
-from conda_libmamba_solver.state import IndexHelper
+from conda_libmamba_solver.index import _ChannelRepoInfo, LibMambaIndexHelper
 
 from rattler import SparseRepoData, Channel as RattlerChannel
 
 log = logging.getLogger(f"conda.{__name__}")
 
 
-class RattlerIndexHelper(IndexHelper):
+class RattlerIndexHelper(LibMambaIndexHelper):
+    """An interface between conda and rattler which builds an index.
+
+    An index is a collection of package records which can be part of a solution.
+    It is built by collecting all the repodata.json files from channels and their
+    subdirs. For existing environments, the installed packages are also added to
+    the index (this helps with simplifying solutions and outputs). The local cache
+    can also be added as a "channel", which is useful in offline mode or with no
+    channels configured.
+    """
     def __init__(
         self,
         channels: Iterable[Union[Channel, str]] = None,
         subdirs: Iterable[str] = None,
         repodata_fn: str = REPODATA_FN,
     ):
-        self._channels = context.channels if channels is None else channels
+
+        if channels is None:
+            channels = context.channels
+        self._channels: list[Channel] = [Channel(ch) for ch in channels]
+
         self._subdirs = context.subdirs if subdirs is None else subdirs
         self._repodata_fn = repodata_fn
 
@@ -93,18 +105,31 @@ class RattlerIndexHelper(IndexHelper):
         )
 
     def _load_channels(self) -> Dict[str, _ChannelRepoInfo]:
+        """Load the channels.
+
+        Authed URLs always take precedence over unauthed URLs.
+
+        Returns
+        -------
+        Dict[str, _ChannelRepoInfo]
+            A mapping between channel urls and objects that hold information about the repository
+        """
         # 1. Obtain and deduplicate URLs from channels
         urls = []
         seen_noauth = set()
-        for _c in self._channels:
-            c = Channel(_c)
-            noauth_urls = c.urls(with_credentials=False, subdirs=self._subdirs)
+        for channel in self._channels:
+            noauth_urls = channel.urls(with_credentials=False, subdirs=self._subdirs)
+
+            # If the urls are unauth and have already been seen, do nothing
             if seen_noauth.issuperset(noauth_urls):
                 continue
-            if c.auth or c.token:  # authed channel always takes precedence
-                urls += Channel(c).urls(with_credentials=True, subdirs=self._subdirs)
-                seen_noauth.update(noauth_urls)
+
+            # Authed channels always takes precedence over unauthed channels
+            if channel.auth or channel.token:
+                urls += channel.urls(with_credentials=True, subdirs=self._subdirs)
+                seen_noauth |= noauth_urls
                 continue
+
             # at this point, we are handling an unauthed channel; in some edge cases,
             # an auth'd variant of the same channel might already be present in `urls`.
             # we only add them if we haven't seen them yet
