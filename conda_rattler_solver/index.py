@@ -54,11 +54,6 @@ class RattlerIndexHelper(LibMambaIndexHelper):
         try:
             return self._index[key]
         except KeyError as exc:
-            # some libmamba versions return encoded URLs
-            try:
-                return self._index[percent_decode(key)]
-            except KeyError:
-                pass  # raise original error below
             raise KeyError(
                 f"Channel info for {orig_key} ({key}) not found. "
                 f"Available keys: {list(self._index)}"
@@ -100,8 +95,8 @@ class RattlerIndexHelper(LibMambaIndexHelper):
         return _ChannelRepoInfo(
             repo=repo,
             channel=channel,
-            full_url=url,
-            noauth_url=noauth_url,
+            url_w_cred=url,
+            url_no_cred=noauth_url,
         )
 
     def _load_channels(self) -> Dict[str, _ChannelRepoInfo]:
@@ -153,6 +148,6 @@ class RattlerIndexHelper(LibMambaIndexHelper):
         index = {}
         for url in urls:
             info = self._json_path_to_repo_info(url, jsons[url])
-            index[info.noauth_url] = info
+            index[info.url_no_cred] = info
 
         return index
