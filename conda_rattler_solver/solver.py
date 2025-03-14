@@ -12,7 +12,6 @@ from boltons.setutils import IndexedSet
 from conda.base.constants import ChannelPriority
 from conda.base.context import context
 from conda.common.constants import NULL
-
 from conda.common.io import Spinner
 from conda.models.match_spec import MatchSpec
 from conda.models.records import PackageRecord
@@ -147,30 +146,30 @@ class RattlerSolver(LibMambaSolver):
             jobs = self._specs_to_request_jobs_add(in_state, out_state)
 
         plan = CondaPlan()
-        for JobType, job_specs in jobs.items():
+        for job_type, job_specs in jobs.items():
             # Convert all specs to MatchSpec
-            specs: MatchSpec = []
+            specs: list[MatchSpec] = []
             for spec in job_specs:
                 if isinstance(spec, str):
                     spec = MatchSpec(spec)
                 specs.append(spec)
 
-            if JobType == Request.Freeze:
+            if job_type == Request.Freeze:
                 plan.freeze = specs
-            elif JobType == Request.Install:
+            elif job_type == Request.Install:
                 plan.install = specs
-            elif JobType == Request.Keep:
+            elif job_type == Request.Keep:
                 plan.keep = specs
-            elif JobType == Request.Pin:
+            elif job_type == Request.Pin:
                 plan.pin = specs
                 for idx, spec in enumerate(specs, 1):
                     out_state.pins[f"pin-{idx}"] = MatchSpec(spec)
-            elif JobType == Request.Remove:
+            elif job_type == Request.Remove:
                 plan.remove = specs
-            elif JobType == Request.Update:
+            elif job_type == Request.Update:
                 plan.update = specs
             else:
-                raise ValueError(f"Unknown job type: {JobType.__name__} for specs {specs}")
+                raise ValueError(f"Unknown job type: {job_type.__name__} for specs {specs}")
 
         return plan
 
@@ -186,6 +185,9 @@ class RattlerSolver(LibMambaSolver):
 
         # TODO: convert MatchSpec objects to RepoDataRecord objects for `solve`
         specs = interop.convert_spec(list(plan))
+
+        locked = interop.convert_record(plan.freeze)
+        installed = interop.get_installed(self.prefix)
 
         # Flags are copied from conda_libmamba_solver.solver.Solver._solver_flags
         result = asyncio.run(
@@ -207,14 +209,6 @@ class RattlerSolver(LibMambaSolver):
                 constraints=None,
             )
         )
-
-        # # TODO: This is a hack to get the installed packages into the solver
-        # # but rattler doesn't allow PrefixRecords to be passed in yet
-        # rattler_installed = {}
-        # for json_path in Path(self.prefix).glob("conda-meta/*.json"):
-        #     name = json_path.stem.rsplit("-", 2)[0]
-        #     record = RattlerPrefixRecord.from_path(json_path)
-        #     rattler_installed[name] = record
 
         # specs = []
         # pins = []
