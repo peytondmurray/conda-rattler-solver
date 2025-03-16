@@ -8,6 +8,7 @@ from functools import lru_cache
 from pprint import pformat
 from typing import TYPE_CHECKING
 
+import rattler
 from boltons.setutils import IndexedSet
 from conda.base.constants import ChannelPriority
 from conda.base.context import context
@@ -80,7 +81,7 @@ class RattlerSolver(LibMambaSolver):
         ignore_pinned: bool | _Null = NULL,
         force_remove: bool | _Null = NULL,
         should_retry_solve: bool = False,
-    ) -> IndexedSet[PackageRecord]:
+    ) -> IndexedSet:
         in_state = SolverInputState(
             prefix=self.prefix,
             requested=self.specs_to_add or self.specs_to_remove,
@@ -178,7 +179,7 @@ class RattlerSolver(LibMambaSolver):
         in_state: SolverInputState,
         out_state: SolverOutputState,
         index: RattlerIndexHelper,
-    ) -> tuple[bool, Solution | UnSolvable]:
+    ) -> list[rattler.RepoDataRecord]:
         out_state.check_for_pin_conflicts(index)
         logger.debug("Current conflicts (including learnt ones): %r", out_state.conflicts)
         plan = self._specs_to_plan(in_state, out_state)
@@ -188,27 +189,6 @@ class RattlerSolver(LibMambaSolver):
 
         locked = interop.convert_record(plan.freeze)
         installed = interop.get_installed(self.prefix)
-
-        # Flags are copied from conda_libmamba_solver.solver.Solver._solver_flags
-        result = asyncio.run(
-            solve(
-                channels=interop.convert_channels(index._channels),
-                specs=specs,
-                # specs=conda_to_rattler_spec(plan.install),
-                gateway=Gateway(),
-                platforms=None,
-                # locked_packages=conda_to_rattler_record(plan.freeze),
-                # pinned_packages=conda_to_rattler_record(plan.pin),
-                virtual_packages=RattlerVirtualPackage.detect(),
-                timeout=None,
-                channel_priority=interop.convert_channel_priority(
-                    context.channel_priority if context.channel_priority else ChannelPriority.STRICT
-                ),
-                exclude_newer=None,
-                strategy="highest",
-                constraints=None,
-            )
-        )
 
         # specs = []
         # pins = []
@@ -228,9 +208,28 @@ class RattlerSolver(LibMambaSolver):
         #                 if MatchSpec(spec).match(record):
         #                     locked.append(rattler_installed[record.name])
 
-        return result
+        # Flags are copied from conda_libmamba_solver.solver.Solver._solver_flags
+        return asyncio.run(
+            solve(
+                channels=interop.convert_channels(index._channels),
+                specs=specs,
+                # specs=conda_to_rattler_spec(plan.install),
+                gateway=Gateway(),
+                platforms=None,
+                # locked_packages=conda_to_rattler_record(plan.freeze),
+                # pinned_packages=conda_to_rattler_record(plan.pin),
+                virtual_packages=RattlerVirtualPackage.detect(),
+                timeout=None,
+                channel_priority=interop.convert_channel_priority(
+                    context.channel_priority if context.channel_priority else ChannelPriority.STRICT
+                ),
+                exclude_newer=None,
+                strategy="highest",
+                constraints=None,
+            )
+        )
 
-    def _export_solved_records(self, records, out_state):
+    def _export_solved_records(self, records: list[rattler.RepoDataRecord], out_state: SolverOutputState) -> None:
         for record in records:
             out_state.records[record.name] = PackageRecord(
                 arch=record.arch,
@@ -246,16 +245,16 @@ class RattlerSolver(LibMambaSolver):
                 legacy_bz2_size=record.legacy_bz2_size,
                 license=record.license,
                 license_family=record.license_family,
-                md5=record.md5.hex(),
+                md5=record.md5.hex() if record.md5 else None,
                 name=record.name.source,
                 # noarch=record.noarch,  #! TODO: MISSING
                 # package_type=record.package_type, #! TODO: MISSING
                 platform=record.platform,
                 # preferred_env=record.preferred_env, #! TODO: MISSING
-                sha256=record.sha256.hex(),
+                sha256=record.sha256.hex() if record.sha256 else None,
                 size=record.size or 0,
                 subdir=record.subdir,
-                timestamp=record.timestamp.toordinal() or 0,
+                timestamp=record.timestamp.toordinal() if record.timestamp else 0,
                 track_features=record.track_features or (),
                 url=record.url,
                 version=str(record.version),
