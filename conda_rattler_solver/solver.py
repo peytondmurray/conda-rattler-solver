@@ -4,7 +4,7 @@ import asyncio
 import itertools
 import logging
 from dataclasses import dataclass, field
-from functools import lru_cache
+from functools import cache
 from pprint import pformat
 from typing import TYPE_CHECKING
 
@@ -38,7 +38,6 @@ if TYPE_CHECKING:
         DepsModifier,
         UpdateModifier,
     )
-    from libmambapy.solver.libsolv import Solution, UnSolvable
 
 
 logger = logging.getLogger(f"conda.{__name__}")
@@ -66,11 +65,9 @@ class CondaPlan:
 
 class RattlerSolver(LibMambaSolver):
     @staticmethod
-    @lru_cache(maxsize=None)
+    @cache
     def user_agent() -> str:
-        """
-        Expose this identifier to allow conda to extend its user agent if required
-        """
+        """Expose this identifier to allow conda to extend its user agent if required."""
         return f"conda-rattler-solver/{__version__} py-rattler/{rattler_version}"
 
     def solve_final_state(
@@ -80,7 +77,7 @@ class RattlerSolver(LibMambaSolver):
         prune: bool | _Null = NULL,
         ignore_pinned: bool | _Null = NULL,
         force_remove: bool | _Null = NULL,
-        should_retry_solve: bool = False,
+        _should_retry_solve: bool = False,
     ) -> IndexedSet:
         in_state = SolverInputState(
             prefix=self.prefix,
@@ -187,27 +184,6 @@ class RattlerSolver(LibMambaSolver):
         # TODO: convert MatchSpec objects to RepoDataRecord objects for `solve`
         specs = interop.convert_spec(list(plan))
 
-        locked = interop.convert_record(plan.freeze)
-        installed = interop.get_installed(self.prefix)
-
-        # specs = []
-        # pins = []
-        # locked = []
-        # for (task_name, _), task_specs in tasks.items():
-        #     if task_name in ("INSTALL", "UPDATE"):
-        #         specs.extend(task_specs)
-        #     # TODO
-        #     elif task_name in ("ADD_PIN", "USERINSTALLED"):
-        #         for spec in task_specs:
-        #             for record in in_state.installed.values():
-        #                 if MatchSpec(spec).match(record):
-        #                     pins.append(rattler_installed[record.name])
-        #     elif task_name == "LOCK":
-        #         for spec in task_specs:
-        #             for record in in_state.installed.values():
-        #                 if MatchSpec(spec).match(record):
-        #                     locked.append(rattler_installed[record.name])
-
         # Flags are copied from conda_libmamba_solver.solver.Solver._solver_flags
         return asyncio.run(
             solve(
@@ -229,33 +205,11 @@ class RattlerSolver(LibMambaSolver):
             )
         )
 
-    def _export_solved_records(self, records: list[rattler.RepoDataRecord], out_state: SolverOutputState) -> None:
-        for record in records:
-            out_state.records[record.name] = PackageRecord(
-                arch=record.arch,
-                build=record.build,
-                build_number=record.build_number,
-                channel=record.channel,
-                constrains=record.constrains or (),
-                # date=record.date, #! TODO: MISSING
-                depends=record.depends or (),
-                features=record.features or (),
-                fn=record.file_name,
-                legacy_bz2_md5=record.legacy_bz2_md5.hex() if record.legacy_bz2_md5 else None,
-                legacy_bz2_size=record.legacy_bz2_size,
-                license=record.license,
-                license_family=record.license_family,
-                md5=record.md5.hex() if record.md5 else None,
-                name=record.name.source,
-                # noarch=record.noarch,  #! TODO: MISSING
-                # package_type=record.package_type, #! TODO: MISSING
-                platform=record.platform,
-                # preferred_env=record.preferred_env, #! TODO: MISSING
-                sha256=record.sha256.hex() if record.sha256 else None,
-                size=record.size or 0,
-                subdir=record.subdir,
-                timestamp=record.timestamp.toordinal() if record.timestamp else 0,
-                track_features=record.track_features or (),
-                url=record.url,
-                version=str(record.version),
-            )
+    def _export_solved_records(
+        self,
+        records: list[rattler.RepoDataRecord],
+        out_state: SolverOutputState,
+    ) -> None:
+        out_state.records.update(
+            interop.rattler_repodatarecords_to_conda(records)
+        )
